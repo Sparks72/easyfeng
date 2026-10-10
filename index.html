@@ -1,0 +1,906 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EasyFeng</title>
+<!--
+  EasyFeng — programs repeater and airband channels into a Baofeng
+  K63 / K6, UV-5R Mini or UV-17Pro. An independent, free tool; not made or
+  endorsed by Baofeng.
+  over its USB programming cable, straight from Chrome or Edge (Web Serial).
+
+  The radio's cable protocol and memory layout are taken from CHIRP's
+  baofeng_uv17Pro.py driver (class BFK6), which is licensed under the
+  GNU General Public License version 2 or later. This page is therefore
+  also offered under the GNU GPL v2 or later. https://chirpmyradio.com
+-->
+<style>
+  :root{
+    --bg:#11151c; --panel:#1a2029; --panel2:#212834; --line:#323b4a;
+    --ink:#eef2f7; --dim:#a7b1c2; --key:#3ecf8e; --keyd:#1e6b4b; --warn:#f5c04a; --hot:#ff6b5e; --info:#6fb3ff;
+  }
+  :root[data-theme="light"]{
+    --bg:#f3f5f8; --panel:#ffffff; --panel2:#eef1f5; --line:#c9d1dc;
+    --ink:#141a22; --dim:#4b5768; --key:#13804f; --keyd:#cdeedd; --warn:#9a6a00; --hot:#c0392b; --info:#1f63b5;
+  }
+  @media (prefers-color-scheme: light){
+    :root:not([data-theme="dark"]){
+      --bg:#f3f5f8; --panel:#ffffff; --panel2:#eef1f5; --line:#c9d1dc;
+      --ink:#141a22; --dim:#4b5768; --key:#13804f; --keyd:#cdeedd; --warn:#9a6a00; --hot:#c0392b; --info:#1f63b5;
+    }
+  }
+  *{box-sizing:border-box}
+  [hidden]{display:none !important}
+  html{font-size:18px}
+  body{margin:0;background:var(--bg);color:var(--ink);font:1rem/1.45 system-ui,"Segoe UI",Roboto,sans-serif}
+  .wrap{max-width:1000px;margin:0 auto;padding:18px 16px 60px}
+  header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:14px}
+  h1{font-size:1.55rem;margin:0;flex:1;min-width:240px}
+  h2{font-size:1.2rem;margin:0 0 10px;display:flex;align-items:center;gap:10px}
+  h2 .num{display:inline-grid;place-items:center;width:34px;height:34px;border-radius:50%;background:var(--keyd);color:var(--key);font-weight:700}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:16px}
+  .row{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+  .row + .row{margin-top:12px}
+  p{margin:6px 0}
+  .dim{color:var(--dim)}
+  .small{font-size:.86rem}
+  .ok{color:var(--key)} .err{color:var(--hot)} .warn{color:var(--warn)}
+  button{font:inherit;font-size:1.05rem;font-weight:600;min-height:56px;padding:10px 22px;border-radius:10px;
+         border:2px solid var(--line);background:var(--panel2);color:var(--ink);cursor:pointer}
+  button:hover:not(:disabled){border-color:var(--key)}
+  button:disabled{opacity:.45;cursor:default}
+  button.go{background:var(--key);border-color:var(--key);color:#06140d}
+  :root[data-theme="light"] button.go{color:#fff}
+  button.danger{border-color:var(--hot);color:var(--hot)}
+  button.slim{min-height:44px;padding:6px 14px;font-size:.95rem}
+  button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid var(--info);outline-offset:2px}
+  input,select{font:inherit;font-size:1.05rem;min-height:48px;padding:8px 10px;border-radius:8px;border:2px solid var(--line);
+         background:var(--panel2);color:var(--ink)}
+  input[type=number]{width:110px}
+  label.f{display:flex;flex-direction:column;gap:4px;font-size:.9rem;color:var(--dim)}
+  .status{display:flex;align-items:center;gap:10px;font-weight:600}
+  .lamp{width:16px;height:16px;border-radius:50%;background:#556070;flex:none}
+  .lamp.on{background:var(--key);box-shadow:0 0 8px var(--key)}
+  .bar{height:14px;border-radius:7px;background:var(--panel2);border:1px solid var(--line);overflow:hidden;flex:1;min-width:160px}
+  .bar i{display:block;height:100%;width:0;background:var(--key);transition:width .1s}
+  .steps{margin:6px 0 0;padding-left:1.4em} .steps li{margin:3px 0}
+
+  /* repeater cards: the whole card is one big toggle */
+  .tabs{display:flex;gap:6px;flex-wrap:wrap;border-bottom:3px solid var(--line);margin-bottom:12px}
+  .tabs button{border-radius:10px 10px 0 0;border-bottom:none;margin-bottom:-3px;min-height:54px;font-size:1.05rem}
+  .tabs button.sel{border-color:var(--key);border-bottom:3px solid var(--panel);color:var(--key);background:var(--panel)}
+  .tabs .cnt{font-weight:400;color:var(--dim);font-size:.9rem}
+  .tabs button.model{border-radius:10px;border-bottom:2px solid var(--line);margin-bottom:0}
+  .tabs button.model.sel{border:2px solid var(--key);color:var(--key);background:color-mix(in srgb,var(--key) 12%,var(--panel2))}
+  #nearBtn[aria-pressed="true"]{border-color:var(--key);color:var(--key)}
+  .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:12px}
+  .card{position:relative;text-align:left;display:flex;flex-direction:column;justify-content:flex-start;align-items:stretch;width:100%;min-height:0;padding:14px 14px 12px 62px;border-radius:12px;font-weight:400}
+  .card::before{content:"";position:absolute;left:16px;top:16px;width:30px;height:30px;border-radius:7px;border:3px solid var(--dim)}
+  .card.sel{border-color:var(--key);background:color-mix(in srgb,var(--key) 12%,var(--panel2))}
+  .card::before{display:grid;place-items:center;font-size:24px;font-weight:900;line-height:1}
+  .card.sel::before{content:"\2713";border-color:var(--key);background:var(--key);color:#06140d}
+  :root[data-theme="light"] .card.sel::before{color:#fff}
+  .card .call{font-size:1.25rem;font-weight:700;padding-right:64px;overflow-wrap:anywhere}
+  .card .qrg{font-size:1.15rem;font-variant-numeric:tabular-nums}
+  .card .meta{font-size:.86rem;color:var(--dim)}
+  .pill{display:inline-block;font-size:.75rem;font-weight:700;padding:2px 8px;border-radius:20px;border:1px solid currentColor;margin-left:6px;vertical-align:2px}
+  .card .edit{position:absolute;right:10px;top:10px;min-height:38px;padding:4px 12px;font-size:.85rem}
+
+  table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+  th,td{text-align:left;padding:8px 8px;border-bottom:1px solid var(--line)}
+  th{font-size:.85rem;color:var(--dim);font-weight:600}
+  tr.clash td{color:var(--warn)}
+  .log{font:13px/1.45 ui-monospace,Consolas,monospace;background:var(--panel2);border:1px solid var(--line);border-radius:8px;
+       padding:10px;max-height:220px;overflow:auto;white-space:pre-wrap;margin:0}
+
+  dialog{border:2px solid var(--line);border-radius:12px;background:var(--panel);color:var(--ink);padding:20px;max-width:560px;width:calc(100% - 32px)}
+  dialog::backdrop{background:rgba(0,0,0,.55)}
+  dialog h3{margin:0 0 10px;font-size:1.2rem}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  @media (max-width:560px){ .grid2{grid-template-columns:1fr} html{font-size:17px} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>EasyFeng <span class="dim" style="font-size:1rem;font-weight:400">· repeaters made easy for Baofeng radios</span></h1>
+    <button id="themeBtn" class="slim" type="button">Light / dark</button>
+  </header>
+
+  <!-- 1. connect and read -->
+  <div class="panel">
+    <h2><span class="num">1</span>Choose your radio, connect and read it</h2>
+    <div class="tabs" id="models" style="border-bottom:none;margin-bottom:6px">
+      <button type="button" class="model" data-m="K6">K63 / K6</button>
+      <button type="button" class="model" data-m="UV5RMINI">UV-5R Mini</button>
+      <button type="button" class="model" data-m="UV17PRO">UV-17Pro</button>
+    </div>
+    <ol class="steps dim">
+      <li>Switch the radio <b>off</b>. Plug the cable into the radio (fold the rubber cover right back and push firmly) and into the PC.</li>
+      <li>Switch the radio <b>on</b> and turn the volume up a little.</li>
+      <li>Press <b>Read radio</b> and choose the cable's COM port. A backup of the radio is saved automatically.</li>
+    </ol>
+    <div class="row" style="margin-top:12px">
+      <button id="readBtn" class="go" type="button">Read radio</button>
+      <button id="demoBtn" type="button" title="Try everything without a radio">Try with a pretend radio</button>
+      <span class="status"><span class="lamp" id="lamp"></span><span id="state">Not connected</span></span>
+    </div>
+    <div class="row"><div class="bar"><i id="prog"></i></div><span id="progTxt" class="dim small"></span></div>
+    <p id="radioInfo" class="dim"></p>
+  </div>
+
+  <!-- 2. pick repeaters -->
+  <div class="panel">
+    <h2><span class="num">2</span>Pick repeaters and stations</h2>
+    <div class="tabs" id="filters" role="tablist">
+      <button type="button" role="tab" data-f="2m">2 m · 145 MHz <span class="cnt"></span></button>
+      <button type="button" role="tab" data-f="70cm">70 cm · 438–439 MHz <span class="cnt"></span></button>
+      <button type="button" role="tab" data-f="air" id="airTab">Airband · AM <span class="cnt"></span></button>
+      <button type="button" role="tab" data-f="all">All <span class="cnt"></span></button>
+    </div>
+    <div class="row" style="margin-bottom:12px">
+      <button type="button" class="slim" id="nearBtn" aria-pressed="false">Only within 60 km</button>
+      <button type="button" class="slim" id="addBtn">+ Add your own</button>
+    </div>
+    <div class="cards" id="cards"></div>
+    <p class="dim small" style="margin-top:12px">Distances are from <b id="homeTxt"></b>.
+      <button type="button" class="slim" id="homeBtn">Change home locator</button></p>
+    <p class="dim small">Sources: repeatermap.de list (Dec 2022), RepeaterBook, afu-nord.de and the 2019 DL5SAF list. Each card says how current its entry is.
+      Not every repeater uses a CTCSS tone: where a card shows one, the channel sends it. Where none is listed, the repeater opens on carrier or with the
+      1750 Hz burst (step 3). If one doesn't open, edit its card and add the tone.
+      Airband channels are receive only (the radio cannot transmit on them) and use AM. Airband frequencies come from OurAirports and the
+      Fehmarn airfield site; check them against a current chart.</p>
+  </div>
+
+  <!-- 3. channels -->
+  <div class="panel">
+    <h2><span class="num">3</span>Choose channels and check</h2>
+    <div class="row">
+      <label class="f">First channel number
+        <span class="row" style="gap:6px">
+          <button type="button" class="slim" id="chDown" aria-label="Lower channel">−</button>
+          <input type="number" id="chStart" min="1" max="999" value="1">
+          <button type="button" class="slim" id="chUp" aria-label="Higher channel">+</button>
+        </span>
+      </label>
+      <button type="button" class="slim" id="chFree">Use the first free channels</button>
+      <label class="f">Power
+        <select id="power"><option value="0">High (5 W)</option><option value="1">Low (1 W)</option></select>
+      </label>
+      <label class="f">Bandwidth
+        <select id="bw"><option value="wide">Wide FM (normal)</option><option value="narrow">Narrow FM</option></select>
+      </label>
+    </div>
+    <div id="burstWrap">
+    <div class="row">
+      <label style="display:flex;gap:10px;align-items:center;font-size:1rem">
+        <input type="checkbox" id="burst" style="width:26px;height:26px;min-height:0"> Set the radio's tone burst to <b>1750 Hz</b>
+      </label>
+      <span class="dim small" id="burstNow"></span>
+    </div>
+    <p class="dim small">With the tone burst at 1750 Hz, hold <b>PTT</b> and press the upper side key to open a repeater that needs it.</p>
+    </div>
+    <div class="row" id="amRow" hidden>
+      <label style="display:flex;gap:10px;align-items:center;font-size:1rem">
+        <input type="checkbox" id="amrx" checked style="width:26px;height:26px;min-height:0"> Turn on the radio's <b>AM receive</b> (for airband)
+      </label>
+      <span class="dim small" id="amNow"></span>
+    </div>
+    <div id="preview" style="margin-top:10px"></div>
+  </div>
+
+  <!-- 4. write -->
+  <div class="panel">
+    <h2><span class="num">4</span>Write to the radio</h2>
+    <p class="dim">Only the chosen channels are changed. Everything else in the radio stays as it is.</p>
+    <div class="row">
+      <button id="writeBtn" class="go" type="button" disabled>Write channels to radio</button>
+      <button id="saveImgBtn" type="button" disabled>Save a copy for CHIRP (.img)</button>
+    </div>
+    <p id="writeNote" class="dim small"></p>
+  </div>
+
+  <!-- 5. restore -->
+  <div class="panel">
+    <h2><span class="num">5</span>Put a backup back</h2>
+    <p class="dim">Restores the whole radio from a backup this page saved, or from a CHIRP .img file of the same model.</p>
+    <div class="row">
+      <button id="restoreBtn" class="danger" type="button">Restore a backup…</button>
+      <input type="file" id="restoreFile" accept=".img" hidden>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Log</h2>
+    <pre class="log" id="log"></pre>
+    <p class="dim small">Cable protocol and memory layout from <a href="https://chirpmyradio.com" style="color:var(--info)">CHIRP</a> (Baofeng K6 driver, GNU GPL v2 or later). This page is offered under the same licence. Experimental: always keep the backup.</p>
+    <p class="dim small">EasyFeng is an independent, free tool. It is not made or endorsed by Baofeng.</p>
+  </div>
+</div>
+
+<!-- edit / add repeater -->
+<dialog id="rptDlg">
+  <form method="dialog" id="rptForm">
+    <h3 id="rptTitle">Repeater</h3>
+    <div class="grid2">
+      <label class="f">Name on the radio (max 12)<input id="fCall" maxlength="12" required></label>
+      <label class="f">Place<input id="fQth"></label>
+      <label class="f">Frequency you listen on, MHz (108–137 = airband, listen only)<input id="fOut" inputmode="decimal" required></label>
+      <label class="f">Shift
+        <select id="fShift">
+          <option value="-0.6">− 0.6 MHz (2 m)</option>
+          <option value="-7.6">− 7.6 MHz (70 cm, Germany)</option>
+          <option value="-2">− 2 MHz (70 cm, Denmark)</option>
+          <option value="+0.6">+ 0.6 MHz</option>
+          <option value="0">None (simplex)</option>
+        </select>
+      </label>
+      <label class="f">CTCSS tone to open it
+        <select id="fTone"></select>
+      </label>
+      <label class="f">Locator (for distance)<input id="fLoc" maxlength="6"></label>
+    </div>
+    <p id="fErr" class="err small"></p>
+    <div class="row" style="margin-top:14px">
+      <button value="ok" class="go" id="fOk">Save</button>
+      <button value="cancel" type="button" id="fCancel">Cancel</button>
+      <button value="del" type="button" class="danger" id="fDel">Delete</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- confirmations -->
+<dialog id="askDlg">
+  <h3 id="askTitle"></h3>
+  <div id="askBody"></div>
+  <div class="row" style="margin-top:16px">
+    <button class="go" id="askYes" type="button">Yes</button>
+    <button id="askNo" type="button">Cancel</button>
+  </div>
+</dialog>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+
+/* ---------- storage, guarded ---------- */
+const store = {
+  get(k, d){ try { const v = localStorage.getItem('k63.' + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v){ try { localStorage.setItem('k63.' + k, JSON.stringify(v)); } catch {} }
+};
+(function(){ const t = store.get('theme', null); if (t) document.documentElement.dataset.theme = t; })();
+$('themeBtn').onclick = () => {
+  const dark = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() === '#11151c';
+  const t = dark ? 'light' : 'dark'; document.documentElement.dataset.theme = t; store.set('theme', t);
+};
+
+/* ---------- log ---------- */
+function log(msg, cls){
+  const el = $('log'), line = document.createElement('div');
+  line.textContent = new Date().toLocaleTimeString() + '  ' + msg; if (cls) line.className = cls;
+  el.appendChild(line); el.scrollTop = el.scrollHeight;
+}
+function setState(txt, on){ $('state').textContent = txt; $('lamp').classList.toggle('on', !!on); }
+function progress(done, total, txt){
+  $('prog').style.width = (total ? 100 * done / total : 0) + '%'; $('progTxt').textContent = txt || '';
+}
+
+/* ======================================================================
+   The cable protocol, shared by Baofeng's newer radios (from CHIRP's
+   baofeng_uv17Pro.py driver)
+   - 115200 baud 8N1
+   - handshake: send a 16-character word, radio answers 0x06; then one or
+     more follow-up commands, each with a fixed-length answer
+   - read:  'R' addrHi addrLo 0x40   -> 4-byte header + 64 bytes
+   - write: 'W' addrHi addrLo 0x40 + 64 bytes -> 0x06
+   - most models scramble the 64 data bytes with a 4-byte XOR key ("CO 7");
+     the K63/K6 does not
+   - the 32-byte channel record is the same on all of them
+   The memory is read in pieces; joined together they make the image CHIRP
+   saves in its .img files.
+   ====================================================================== */
+const UV17_MAGICS = [
+  [[0x46], 16],
+  [[0x4D], 15],
+  [[0x53, 0x45, 0x4E, 0x44, 0x21, 0x05, 0x0D, 0x01, 0x01, 0x01, 0x04, 0x11, 0x08, 0x05, 0x0D, 0x0D, 0x01, 0x11, 0x0F, 0x09, 0x12, 0x09, 0x10, 0x04, 0x00], 1]
+];
+const MODELS = {
+  K6: { name: 'Baofeng K63 / K6', label: 'K63 / K6', file: 'K63', rclass: 'BFK6', model: 'K6',
+        ident: 'PROGRAMBF-K6PROU', MAGICS: [[[0x46], 16]], CRYPT: false,
+        SEGS: [[0x0000, 0x8040], [0x9000, 0x0080], [0xA000, 0x02C0], [0xC000, 0x0040], [0xD000, 0x0040]],
+        SIZE: 0x8400, CHANNELS: 999, TONE_BURST: 0x805D, AM_RX: 0x83C4, AIR: true },
+  UV5RMINI: { name: 'Baofeng UV-5R Mini', label: 'UV-5R Mini', file: 'UV-5R-Mini', rclass: 'UV5RMini', model: 'UV-5R Mini',
+        ident: 'PROGRAMCOLORPROU', MAGICS: UV17_MAGICS, CRYPT: true,
+        SEGS: [[0x0000, 0x8040], [0x9000, 0x0040], [0xA000, 0x01C0]],
+        SIZE: 0x8240, CHANNELS: 999, TONE_BURST: 0x805D, AM_RX: null, AIR: true },
+  UV17PRO: { name: 'Baofeng UV-17Pro', label: 'UV-17Pro', file: 'UV-17Pro', rclass: 'UV17Pro', model: 'UV-17Pro',
+        ident: 'PROGRAMBFNORMALU', MAGICS: UV17_MAGICS, CRYPT: true,
+        SEGS: [[0x0000, 0x8040], [0x9000, 0x0040], [0xA000, 0x02C0], [0xD000, 0x0040]],
+        SIZE: 0x8380, CHANNELS: 1000, TONE_BURST: null, AM_RX: null, AIR: false }
+};
+for (const m of Object.values(MODELS)){
+  m.BLOCK = 0x40; m.CHAN = 32; m.BURSTS = ['1000 Hz', '1450 Hz', '1750 Hz', '2100 Hz'];
+  m.MAGIC = new TextEncoder().encode(m.ident);
+  // every 64-byte block: its image offset and its radio address
+  m.blocks = []; let off = 0;
+  for (const [addr, size] of m.SEGS) for (let a = addr; a < addr + size; a += m.BLOCK, off += m.BLOCK) m.blocks.push({ off, addr: a });
+}
+let modelKey = store.get('model', 'K6'); if (!MODELS[modelKey]) modelKey = 'K6';
+let M = MODELS[modelKey];
+
+/* The scrambling CHIRP calls _crypt with key "CO 7": XOR each byte with the
+   key, except bytes that are 0x00, 0xFF, the key byte or its inverse. It
+   undoes itself, so the same function scrambles and unscrambles. */
+const CRYPT_KEY = [0x43, 0x4F, 0x20, 0x37];
+function crypt(buf){
+  const out = Uint8Array.from(buf);
+  for (let i = 0; i < out.length; i++){
+    const k = CRYPT_KEY[i % 4], b = out[i];
+    if (k !== 0x20 && b !== 0x00 && b !== 0xFF && b !== k && b !== (k ^ 0xFF)) out[i] = b ^ k;
+  }
+  return out;
+}
+
+class RadioError extends Error {}
+
+/* A byte stream over a Web Serial port (or the pretend radio) with timed reads. */
+class Link {
+  async open(port){
+    this.port = port;
+    await port.open({ baudRate: 115200, dataBits: 8, stopBits: 1, parity: 'none', bufferSize: 8192 });
+    this.buf = []; this.wake = null; this.closed = false;
+    this.reader = port.readable.getReader(); this.writer = port.writable.getWriter();
+    this.pump();
+  }
+  async pump(){
+    try { for (;;){ const { value, done } = await this.reader.read(); if (done) break;
+      for (const b of value) this.buf.push(b); if (this.wake) this.wake(); } }
+    catch (e){ if (!this.closed) log('Serial read stopped: ' + e.message, 'err'); }
+  }
+  async write(bytes){ await this.writer.write(bytes instanceof Uint8Array ? bytes : Uint8Array.from(bytes)); }
+  async read(n, ms){
+    const t0 = performance.now();
+    while (this.buf.length < n){
+      const left = ms - (performance.now() - t0); if (left <= 0) break;
+      await new Promise(r => { this.wake = r; setTimeout(r, Math.min(left, 40)); });
+    }
+    if (this.buf.length < n){
+      const got = this.buf.length; this.buf.length = 0;
+      throw new RadioError(got ? `Radio sent ${got} of ${n} bytes, then stopped.` : 'No answer from the radio.');
+    }
+    return Uint8Array.from(this.buf.splice(0, n));
+  }
+  async drain(ms){ await new Promise(r => setTimeout(r, ms)); this.buf.length = 0; }
+  async close(){
+    this.closed = true;
+    try { await this.reader.cancel(); } catch {} try { this.reader.releaseLock(); } catch {}
+    try { this.writer.releaseLock(); } catch {}
+    try { await this.port.close(); } catch {}
+  }
+}
+
+async function handshake(link){
+  await link.drain(30);
+  await link.write(M.MAGIC);
+  let ack;
+  try { ack = await link.read(1, 1500); }
+  catch { throw new RadioError(`The radio did not answer. Check it is a ${M.name} (step 1), switched on, the plug pushed fully in, and the right COM port chosen.`); }
+  if (ack[0] !== 0x06) throw new RadioError(`The radio answered 0x${ack[0].toString(16)} instead of OK. Is this a ${M.name}?`);
+  let id = null;
+  for (const [cmd, len] of M.MAGICS){
+    await link.write(cmd);
+    const r = await link.read(len, 1500);
+    if (!id) id = r;
+  }
+  return Array.from(id, b => (b >= 32 && b < 127) ? String.fromCharCode(b) : '.').join('');
+}
+async function readImage(link){
+  const img = new Uint8Array(M.SIZE);
+  let n = 0;
+  for (const { off, addr } of M.blocks){
+    await link.write([0x52, addr >> 8, addr & 0xFF, M.BLOCK]);
+    const d = await link.read(M.BLOCK + 4, 1500);
+    img.set(M.CRYPT ? crypt(d.subarray(4)) : d.subarray(4), off);
+    progress(++n, M.blocks.length, `Reading ${n} of ${M.blocks.length}`);
+  }
+  return img;
+}
+async function writeBlocks(link, img, blocks){
+  let n = 0;
+  for (const { off, addr } of blocks){
+    const data = img.subarray(off, off + M.BLOCK);
+    await link.write([0x57, addr >> 8, addr & 0xFF, M.BLOCK, ...(M.CRYPT ? crypt(data) : data)]);
+    const ack = await link.read(1, 1500);
+    if (ack[0] !== 0x06) throw new RadioError(`The radio refused block 0x${addr.toString(16)}.`);
+    progress(++n, blocks.length, `Writing ${n} of ${blocks.length}`);
+  }
+}
+async function readBlocks(link, blocks){
+  const out = [];
+  for (const { addr } of blocks){
+    await link.write([0x52, addr >> 8, addr & 0xFF, M.BLOCK]);
+    const d = (await link.read(M.BLOCK + 4, 1500)).subarray(4);
+    out.push(M.CRYPT ? crypt(d) : d);
+  }
+  return out;
+}
+
+/* ---------- channel records (32 bytes each, channel n at (n-1)*32) ----------
+   0-3 RX freq, 4-7 TX freq: little-endian BCD in 10 Hz units
+   8-9 RX tone, 10-11 TX tone: little-endian, CTCSS Hz x 10, 0 = none
+   12 S-code, 13 PTT-ID, 14 bits 1-0 power (0 high, 1 low)
+   15 bit 6 narrow, bit 2 scan;  16-19 0xFF;  20-31 name, padded 0xFF       */
+function bcdOut(hz){ const v = Math.round(hz / 10).toString().padStart(8, '0'); const b = [];
+  for (let i = 6; i >= 0; i -= 2) b.push(parseInt(v.substr(i, 2), 16)); return b; }
+function bcdIn(b){ let s = ''; for (let i = 3; i >= 0; i--) s += b[i].toString(16).padStart(2, '0');
+  return /^\d{8}$/.test(s) ? parseInt(s, 10) * 10 : null; }
+function encodeChannel(c){
+  const r = new Uint8Array(32).fill(0);
+  r.set(bcdOut(c.rxHz), 0);
+  if (c.txHz == null) r.fill(0xFF, 4, 8); else r.set(bcdOut(c.txHz), 4);   // no TX frequency = receive only
+  const t = c.tone ? Math.round(c.tone * 10) : 0;          // tone on transmit only (CHIRP "Tone" mode)
+  r[10] = t & 0xFF; r[11] = t >> 8;
+  r[14] = c.low ? 1 : 0;
+  r[15] = (c.narrow ? 0x40 : 0) | 0x04;
+  r.fill(0xFF, 16, 32);
+  const name = c.name.toUpperCase().replace(/[^\x20-\x7E]/g, '').slice(0, 12);
+  for (let i = 0; i < name.length; i++) r[20 + i] = name.charCodeAt(i);
+  return r;
+}
+function decodeChannel(img, n){
+  const o = (n - 1) * M.CHAN, r = img.subarray(o, o + M.CHAN);
+  if (r[0] === 0xFF) return null;
+  let name = ''; for (let i = 20; i < 32 && r[i] !== 0xFF && r[i] !== 0; i++) name += String.fromCharCode(r[i]);
+  const tone = r[10] | (r[11] << 8);
+  return { n, rxHz: bcdIn(r.subarray(0, 4)), txHz: r[4] === 0xFF ? null : bcdIn(r.subarray(4, 8)),
+           tone: tone >= 0x258 && tone !== 0xFFFF ? tone / 10 : null, name: name.trim() };
+}
+
+/* ---------- CHIRP-compatible .img files ---------- */
+const CHIRP_MAGIC = Uint8Array.from([0x00, 0xFF, ...new TextEncoder().encode('chirp'), 0xEE, ...new TextEncoder().encode('img'), 0x00, 0x01]);
+function makeImgFile(img){
+  const meta = btoa(JSON.stringify({ rclass: M.rclass, vendor: 'Baofeng', model: M.model, variant: '' }));
+  return new Blob([img, CHIRP_MAGIC, meta], { type: 'application/octet-stream' });
+}
+function parseImgFile(buf){
+  const b = new Uint8Array(buf);
+  let end = b.length;
+  outer: for (let i = 0; i + CHIRP_MAGIC.length <= b.length; i++){
+    for (let j = 0; j < CHIRP_MAGIC.length; j++) if (b[i + j] !== CHIRP_MAGIC[j]) continue outer;
+    end = i; break;
+  }
+  if (end < M.SIZE) throw new Error(`This file holds ${end} bytes; a ${M.name} image needs ${M.SIZE}. It is not a backup of this model.`);
+  if (end !== b.length){
+    try { const meta = JSON.parse(atob(new TextDecoder().decode(b.subarray(end + CHIRP_MAGIC.length))));
+      if (meta.model && meta.model !== M.model){
+        const other = Object.values(MODELS).find(m => m.model === meta.model);
+        throw new Error(`This backup is for a ${meta.vendor || ''} ${meta.model}, not a ${M.name}.` + (other ? ` Choose "${other.label}" in step 1 first.` : ''));
+      } }
+    catch (e){ if (e.message.startsWith('This backup')) throw e; }
+  }
+  return b.slice(0, M.SIZE);
+}
+function download(blob, name){
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+const stamp = () => { const d = new Date(), z = n => String(n).padStart(2, '0');           // local time
+  return `${d.getFullYear()}${z(d.getMonth() + 1)}${z(d.getDate())}-${z(d.getHours())}${z(d.getMinutes())}`; };
+
+/* ======================================================================
+   Repeaters
+   ====================================================================== */
+const SRC = {
+  afu23: 'Checked 2023 (afu-nord.de)',
+  rm22:  'From the repeatermap.de list, Dec 2022',
+  rb26:  'Listed as active on RepeaterBook (2026)',
+  nor26: 'On the Nord-Ostsee-Rundspruch page (2026)',
+  dl19:  'Only on the 2019 list: may be off air',
+  fair:  'From the Fehmarn airfield site (fehmarn-air.de)',
+  oa:    'From OurAirports: check against current charts',
+  intl:  'International air distress frequency',
+
+  own:   'Added by you'
+};
+const FRESH = { afu23: 'ok', rm22: 'ok', rb26: 'ok', nor26: 'ok', dl19: 'warn', own: 'ok', fair: 'ok', oa: 'warn', intl: 'ok' };
+/* Tones: a number is the CTCSS tone the repeater needs; null means none is listed
+   (it opens on carrier or with the 1750 Hz burst). */
+const BUILTIN = [
+  // ---- 2 m (145 MHz), shift -0.6 MHz ----
+  { id:'DB0MAR', call:'DB0MAR', qth:'Timmendorfer Strand',      loc:'JO54JA', out:145.700,  shift:-0.6, tone:null,  src:'rm22' },
+  { id:'OZ3REP', call:'OZ3REP', qth:'Bandholm, Lolland (DK)',   loc:'JO54RU', out:145.650,  shift:-0.6, tone:82.5,  src:'rb26', note:'Same frequency as DB0MVP; the tone picks which one' },
+  { id:'DB0KUE2',call:'DB0KUE', qth:'Kühlungsborn',             loc:'JO54UD', out:145.6875, shift:-0.6, tone:null,  src:'rm22' },
+  { id:'DB0NAS', call:'DB0NAS', qth:'Niendorf a. d. Stecknitz', loc:'JO53HO', out:145.7125, shift:-0.6, tone:123.0, src:'rm22' },
+  { id:'DB0MVP2',call:'DB0MVP', qth:'Schwerin',                 loc:'JO53QP', out:145.650,  shift:-0.6, tone:88.5,  src:'rm22', note:'Also opens with 1750 Hz' },
+  { id:'DB0ZA',  call:'DB0ZA',  qth:'Aschberg',                 loc:'JO44UK', out:145.625,  shift:-0.6, tone:null,  src:'nor26' },
+  // ---- 70 cm, shift -7.6 MHz ----
+  { id:'DB0PC',  call:'DB0PC',  qth:'Bungsberg',                loc:'JO54IF', out:439.100,  shift:-7.6, tone:null,  src:'afu23', note:'Opens on carrier, no tone needed. If not, try 67.0' },
+  { id:'DO0SOC', call:'DO0SOC', qth:'Gremersdorf',              loc:'JO54KI', out:438.675,  shift:-7.6, tone:null,  src:'dl19' },
+  { id:'DB0KUE7',call:'DB0KUE', qth:'Kühlungsborn',             loc:'JO54UD', out:439.050,  shift:-7.6, tone:null,  src:'rm22' },
+  { id:'DM0KIL', call:'DM0KIL', qth:'Kiel',                     loc:'JO54BH', out:439.025,  shift:-7.6, tone:null,  src:'rm22', note:'Opens on carrier' },
+  { id:'DB0KIL', call:'DB0KIL', qth:'Kiel',                     loc:'JO54BH', out:439.000,  shift:-7.6, tone:null,  src:'dl19' },
+  { id:'DB0DBR', call:'DB0DBR', qth:'Bad Doberan',              loc:'JO54WC', out:439.375,  shift:-7.6, tone:null,  src:'rm22' },
+  { id:'DB0XL',  call:'DB0XL',  qth:'Lübeck',                   loc:'JO53HV', out:438.900,  shift:-7.6, tone:null,  src:'rm22' },
+  { id:'DO0HWI', call:'DO0HWI', qth:'Wismar',                   loc:'JO53QV', out:438.5625, shift:-7.6, tone:88.5,  src:'rm22', note:'FM and digital' },
+  { id:'DB0DI',  call:'DB0DI',  qth:'Bad Segeberg',             loc:'JO53DW', out:438.750,  shift:-7.6, tone:null,  src:'rm22' },
+  { id:'DB0HZL', call:'DB0HZL', qth:'Ratzeburg',                loc:'JO53JQ', out:439.400,  shift:-7.6, tone:null,  src:'rm22' },
+  { id:'DB0MVP7',call:'DB0MVP', qth:'Schwerin',                 loc:'JO53QP', out:438.950,  shift:-7.6, tone:null,  src:'dl19' },
+  { id:'DB0PR',  call:'DB0PR',  qth:'Neumünster-Armstedt',      loc:'JO43WX', out:439.350,  shift:-7.6, tone:null,  src:'nor26' },
+  // ---- airband, AM, listen only (8.33 kHz channel names; the real frequency is worked out) ----
+  { id:'A-EDXF', call:'FEHMARN',    qth:'Fehmarn airfield info',      loc:'JO54NK', out:126.285, shift:0, tone:null, src:'fair' },
+  { id:'A-EDHLT',call:'LUBECK TWR', qth:'Lübeck Tower',               loc:'JO53IT', out:128.705, shift:0, tone:null, src:'oa' },
+  { id:'A-EDHLA',call:'LUBECK ATIS',qth:'Lübeck ATIS (weather)',      loc:'JO53IT', out:119.930, shift:0, tone:null, src:'oa' },
+  { id:'A-EDHLG',call:'LUBECK GND', qth:'Lübeck Ground',              loc:'JO53IT', out:121.780, shift:0, tone:null, src:'oa' },
+  { id:'A-EDDHA',call:'HAMBURG ATIS',qth:'Hamburg ATIS (weather)',    loc:'JO43XP', out:124.325, shift:0, tone:null, src:'oa' },
+  { id:'A-BRE',  call:'BREMEN RDR', qth:'Bremen Radar (Lübeck area)', loc:'',       out:124.225, shift:0, tone:null, src:'oa' },
+  { id:'A-FIS',  call:'LANGEN INFO',qth:'Langen Information (FIS)',   loc:'',       out:125.100, shift:0, tone:null, src:'oa' },
+  { id:'A-GUARD',call:'GUARD 121.5',qth:'Air distress and emergency', loc:'',       out:121.500, shift:0, tone:null, src:'intl' }
+];
+const CTCSS = [67.0,69.3,71.9,74.4,77.0,79.7,82.5,85.4,88.5,91.5,94.8,97.4,100.0,103.5,107.2,110.9,114.8,118.8,123.0,
+  127.3,131.8,136.5,141.3,146.2,151.4,156.7,159.8,162.2,165.5,167.9,171.3,173.8,177.3,179.9,183.5,186.2,189.9,192.8,
+  196.6,199.5,203.5,206.5,210.7,218.1,225.7,229.1,233.6,241.8,250.3,254.1];
+
+// user edits: { edited: {id: repeater}, added: [repeater], deleted: [id] }
+const userRpt = store.get('repeaters', { edited: {}, added: [], deleted: [] });
+function allRepeaters(){
+  return BUILTIN.filter(r => !userRpt.deleted.includes(r.id)).map(r => userRpt.edited[r.id] || r).concat(userRpt.added);
+}
+let home = store.get('home', 'JO54OK');                       // Burg auf Fehmarn
+const picked = new Set(store.get('picked', []));
+let filter = store.get('tab', '2m'), nearOnly = store.get('near', false);
+
+function locToLatLon(loc){
+  loc = (loc || '').trim(); if (!/^[A-R]{2}\d{2}([a-x]{2})?$/i.test(loc)) return null;
+  const L = loc.toUpperCase(), s = loc.length === 6 ? loc.slice(4).toLowerCase() : null;
+  let lon = (L.charCodeAt(0) - 65) * 20 - 180 + (+L[2]) * 2, lat = (L.charCodeAt(1) - 65) * 10 - 90 + (+L[3]);
+  if (s){ lon += (s.charCodeAt(0) - 97) / 12 + 1 / 24; lat += (s.charCodeAt(1) - 97) / 24 + 1 / 48; } else { lon += 1; lat += 0.5; }
+  return [lat, lon];
+}
+function distKm(a, b){
+  const p = locToLatLon(a), q = locToLatLon(b); if (!p || !q) return null;
+  const R = 6371, rad = x => x * Math.PI / 180, dLat = rad(q[0] - p[0]), dLon = rad(q[1] - p[1]);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(p[0])) * Math.cos(rad(q[0])) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+const band = r => r.out < 137 ? 'air' : r.out < 200 ? '2m' : '70cm';
+/* Airband channel names on the 8.33 kHz raster are not the real frequency:
+   e.g. "126.285" is 126.28333 MHz and "128.705" is 128.700 MHz. */
+function airHz(name){
+  const k = Math.round(name * 1000), r = k % 25, base = k - r;
+  const sub = { 0: 0, 5: 0, 10: 8.3333, 15: 16.6667 }[r];
+  return Math.round((base + (sub ?? r)) * 100) * 10;
+}
+const fmtMHz = hz => (hz / 1e6).toFixed(4).replace(/0$/, '');
+function txOf(r){ return band(r) === 'air' ? null : Math.round((r.out + r.shift) * 1e6); }
+function rxOf(r){ return band(r) === 'air' ? airHz(r.out) : Math.round(r.out * 1e6); }
+function legalTx(hz){ return (hz >= 144e6 && hz <= 146e6) || (hz >= 430e6 && hz <= 440e6); }
+
+function renderCards(){
+  const list = allRepeaters().map(r => ({ r, d: distKm(home, r.loc) }))
+    .filter(({ r, d }) => (M.AIR || band(r) !== 'air') && (filter === 'all' || band(r) === filter) && (!nearOnly || (d !== null && d <= 60)))
+    .sort((a, b) => (a.d ?? 1e9) - (b.d ?? 1e9));
+  const box = $('cards'); box.textContent = '';
+  for (const { r, d } of list){
+    const c = document.createElement('button'); c.type = 'button';
+    c.className = 'card' + (picked.has(r.id) ? ' sel' : ''); c.setAttribute('aria-pressed', picked.has(r.id));
+    const srcCls = FRESH[r.src] || 'ok';
+    c.innerHTML = `<div class="call"></div><div class="qrg"></div><div class="meta m1"></div><div class="meta m2"></div>`;
+    c.querySelector('.call').textContent = r.call;
+    const pill = document.createElement('span'); pill.className = 'pill'; pill.textContent = { '2m': '2 m', '70cm': '70 cm', air: 'AM' }[band(r)];
+    c.querySelector('.call').appendChild(pill);
+    c.querySelector('.qrg').textContent = band(r) === 'air' ? `${r.out.toFixed(3)} MHz  ·  listen only` :
+      `${r.out.toFixed(4).replace(/0$/, '')} MHz  ${r.shift < 0 ? '−' : r.shift > 0 ? '+' : ''}${Math.abs(r.shift) || 'simplex'}${r.shift ? ' MHz' : ''}`
+      + (r.tone ? `  ·  CTCSS ${r.tone.toFixed(1)}` : '');
+    c.querySelector('.m1').textContent = `${r.qth || ''}${d !== null ? ' · ' + Math.round(d) + ' km' : ''}${r.note ? ' · ' + r.note : ''}`;
+    const m2 = c.querySelector('.m2'); m2.className = 'meta m2 ' + srcCls; m2.textContent = SRC[r.src] || '';
+    const ed = document.createElement('span'); ed.className = 'edit'; ed.setAttribute('role', 'button'); ed.tabIndex = 0;
+    ed.textContent = 'Edit'; ed.style.cssText = 'border:2px solid var(--line);border-radius:8px;background:var(--panel)';
+    ed.onclick = e => { e.stopPropagation(); editRepeater(r); };
+    ed.onkeydown = e => { if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); e.stopPropagation(); editRepeater(r); } };
+    c.appendChild(ed);
+    c.onclick = () => { picked.has(r.id) ? picked.delete(r.id) : picked.add(r.id); store.set('picked', [...picked]); renderCards(); renderPreview(); };
+    box.appendChild(c);
+  }
+  if (!list.length) box.innerHTML = '<p class="dim">No repeaters here. Try "All", or turn off "Only within 60 km".</p>';
+  $('homeTxt').textContent = home;
+  for (const t of $('filters').querySelectorAll('[data-f]')){
+    const f = t.dataset.f, n = allRepeaters().filter(r => (M.AIR || band(r) !== 'air') && (f === 'all' || band(r) === f) && (!nearOnly || (distKm(home, r.loc) ?? 1e9) <= 60)).length;
+    t.classList.toggle('sel', f === filter); t.setAttribute('aria-selected', f === filter); t.querySelector('.cnt').textContent = '(' + n + ')';
+  }
+  $('nearBtn').setAttribute('aria-pressed', nearOnly);
+}
+$('filters').addEventListener('click', e => {
+  const b = e.target.closest('button[data-f]'); if (!b) return;
+  filter = b.dataset.f; store.set('tab', filter); renderCards();
+});
+$('nearBtn').onclick = () => { nearOnly = !nearOnly; store.set('near', nearOnly); renderCards(); };
+$('homeBtn').onclick = async () => {
+  const v = await askText('Home locator', 'Type your Maidenhead locator, e.g. JO54OK for Burg auf Fehmarn.', home);
+  if (v && locToLatLon(v)){ home = v.slice(0, 2).toUpperCase() + v.slice(2, 4) + v.slice(4).toLowerCase(); store.set('home', home); renderCards(); }
+  else if (v) log(`"${v}" is not a locator.`, 'err');
+};
+
+/* ---------- edit / add dialog ---------- */
+let editing = null;
+$('fTone').innerHTML = '<option value="">None (opens on carrier or 1750 Hz)</option>' + CTCSS.map(t => `<option value="${t}">${t.toFixed(1)} Hz</option>`).join('');
+function editRepeater(r){
+  editing = r;
+  $('rptTitle').textContent = r ? 'Edit ' + r.call : 'Add a repeater or airband station';
+  $('fCall').value = r ? r.call : ''; $('fQth').value = r ? r.qth || '' : ''; $('fLoc').value = r ? r.loc || '' : '';
+  $('fOut').value = r ? r.out : ''; $('fShift').value = r ? (r.shift > 0 ? '+' + r.shift : String(r.shift)) : '-7.6';
+  $('fTone').value = r && r.tone ? String(r.tone) : ''; $('fErr').textContent = '';
+  $('fDel').hidden = !r;
+  $('rptDlg').showModal();
+}
+$('addBtn').onclick = () => editRepeater(null);
+$('fCancel').onclick = () => $('rptDlg').close();
+$('fDel').onclick = () => {
+  const r = editing; if (!r) return;
+  if (userRpt.added.some(x => x.id === r.id)) userRpt.added = userRpt.added.filter(x => x.id !== r.id);
+  else { userRpt.deleted.push(r.id); delete userRpt.edited[r.id]; }
+  picked.delete(r.id); store.set('picked', [...picked]); store.set('repeaters', userRpt);
+  $('rptDlg').close(); renderCards(); renderPreview();
+};
+$('rptForm').addEventListener('submit', e => {
+  const out = parseFloat($('fOut').value.replace(',', '.')), shift = parseFloat($('fShift').value);
+  const call = $('fCall').value.trim(), tone = $('fTone').value ? parseFloat($('fTone').value) : null;
+  const isAir = out >= 108 && out < 137, tx = Math.round((out + shift) * 1e6);
+  if (!call){ e.preventDefault(); $('fErr').textContent = 'Give it a name.'; return; }
+  if (!(out > 0)){ e.preventDefault(); $('fErr').textContent = 'Type the output frequency in MHz, e.g. 439.100.'; return; }
+  if (!isAir && !legalTx(tx)){ e.preventDefault(); $('fErr').textContent = `Transmit would be on ${fmtMHz(tx)} MHz, outside 144–146 or 430–440 MHz. Check the frequency and shift.`; return; }
+  const loc = $('fLoc').value.trim();
+  const r = { id: editing ? editing.id : 'U' + Date.now(), call, qth: $('fQth').value.trim(), loc, out, shift: isAir ? 0 : shift, tone: isAir ? null : tone,
+              src: editing && editing.src !== 'own' ? editing.src : 'own', note: editing ? editing.note : undefined };
+  if (editing && userRpt.added.some(x => x.id === editing.id)) userRpt.added = userRpt.added.map(x => x.id === r.id ? r : x);
+  else if (editing) userRpt.edited[r.id] = r;
+  else { userRpt.added.push(r); picked.add(r.id); store.set('picked', [...picked]); }
+  store.set('repeaters', userRpt); renderCards(); renderPreview();
+});
+
+/* ---------- small modal helpers (no browser alert boxes) ---------- */
+function ask(title, bodyNode, yes = 'Yes'){
+  return new Promise(res => {
+    $('askTitle').textContent = title; const b = $('askBody'); b.textContent = '';
+    if (typeof bodyNode === 'string'){ const p = document.createElement('p'); p.textContent = bodyNode; b.appendChild(p); } else b.appendChild(bodyNode);
+    $('askYes').textContent = yes; $('askNo').hidden = false;
+    const done = v => { $('askDlg').close(); $('askYes').onclick = $('askNo').onclick = null; res(v); };
+    $('askYes').onclick = () => done(true); $('askNo').onclick = () => done(false);
+    $('askDlg').oncancel = () => done(false);
+    $('askDlg').showModal();
+  });
+}
+async function askText(title, text, value){
+  const wrap = document.createElement('div'), p = document.createElement('p'), inp = document.createElement('input');
+  p.textContent = text; inp.value = value || ''; inp.style.width = '100%'; wrap.append(p, inp);
+  setTimeout(() => inp.focus(), 50);
+  return (await ask(title, wrap, 'OK')) ? inp.value.trim() : null;
+}
+
+/* ======================================================================
+   Channels: plan, preview, write
+   ====================================================================== */
+let image = null;          // what's in the radio (last read or written)
+let readThisSession = false;
+const prefs = store.get('prefs', { start: 1, power: '0', bw: 'wide' });
+$('chStart').value = prefs.start; $('power').value = prefs.power; $('bw').value = prefs.bw;
+function savePrefs(){ store.set('prefs', { start: +$('chStart').value, power: $('power').value, bw: $('bw').value }); }
+
+function plan(){
+  const start = Math.max(1, Math.min(999, parseInt($('chStart').value, 10) || 1));
+  const reps = allRepeaters().filter(r => picked.has(r.id) && (M.AIR || band(r) !== 'air'))
+    .sort((a, b) => (distKm(home, a.loc) ?? 1e9) - (distKm(home, b.loc) ?? 1e9));
+  return reps.map((r, i) => ({ n: start + i, r, rxHz: rxOf(r), txHz: txOf(r), tone: band(r) === 'air' ? null : r.tone,
+    name: r.call, low: $('power').value === '1', narrow: $('bw').value === 'narrow',
+    old: image ? decodeChannel(image, start + i) : null }));
+}
+function firstFree(count){
+  if (!image) return 1;
+  for (let s = 1; s + count - 1 <= M.CHANNELS; s++){
+    let ok = true; for (let n = s; n < s + count; n++) if (decodeChannel(image, n)){ ok = false; s = n; break; }
+    if (ok) return s;
+  }
+  return 1;
+}
+function renderPreview(){
+  const p = plan(), box = $('preview'); box.textContent = '';
+  if (!p.length){ box.innerHTML = '<p class="dim">Pick one or more repeaters in step 2.</p>'; updateButtons(); return; }
+  const over = p.filter(c => c.n > M.CHANNELS);
+  const t = document.createElement('table');
+  t.innerHTML = '<thead><tr><th>Ch</th><th>Name</th><th>Receive</th><th>Transmit</th><th>Tone</th><th>Now in the radio</th></tr></thead>';
+  const tb = document.createElement('tbody');
+  for (const c of p){
+    const tr = document.createElement('tr'); if (c.old) tr.className = 'clash';
+    const now = !image ? '(read the radio first)' : c.old ? `${c.old.name || '—'} ${fmtMHz(c.old.rxHz)} — will be replaced` : 'empty';
+    for (const v of [c.n, c.name, c.txHz == null ? c.r.out.toFixed(3) + ' AM' : fmtMHz(c.rxHz), c.txHz == null ? 'listen only' : fmtMHz(c.txHz), c.tone ? c.tone.toFixed(1) : '—', now]){
+      const td = document.createElement('td'); td.textContent = v; tr.appendChild(td); }
+    tb.appendChild(tr);
+  }
+  t.appendChild(tb); box.appendChild(t);
+  const clashes = p.filter(c => c.old).length;
+  if (over.length){ const w = document.createElement('p'); w.className = 'err'; w.textContent = 'Too many channels: the radio stops at 999. Choose a lower first channel.'; box.appendChild(w); }
+  else if (clashes){ const w = document.createElement('p'); w.className = 'warn'; w.textContent = `${clashes} channel${clashes > 1 ? 's' : ''} already in use will be replaced (shown in yellow). Use "first free channels" to avoid that.`; box.appendChild(w); }
+  updateButtons();
+}
+function updateButtons(){
+  const p = plan();
+  $('writeBtn').disabled = busy || !p.length || p.some(c => c.n > M.CHANNELS);
+  $('saveImgBtn').disabled = busy || !image;
+  $('writeNote').textContent = !image ? 'Read the radio first (step 1), so nothing else in it is lost.' : !readThisSession ? 'Read the radio again before writing.' : '';
+  $('readBtn').disabled = $('demoBtn').disabled = $('restoreBtn').disabled = busy;
+  $('burstWrap').hidden = M.TONE_BURST == null;
+  if (image && M.TONE_BURST != null) $('burstNow').textContent = `(radio now: ${M.BURSTS[image[M.TONE_BURST]] || 'unknown'})`;
+  else $('burstNow').textContent = '';
+  if (image && M.AM_RX != null) $('amNow').textContent = `(radio now: ${image[M.AM_RX] === 1 ? 'on' : 'off'})`;
+  $('amRow').hidden = M.AM_RX == null || !p.some(c => c.txHz == null);
+}
+for (const id of ['chStart', 'power', 'bw']) $(id).addEventListener('input', () => { savePrefs(); renderPreview(); });
+$('chUp').onclick = () => { $('chStart').value = Math.min(999, (+$('chStart').value || 1) + 1); savePrefs(); renderPreview(); };
+$('chDown').onclick = () => { $('chStart').value = Math.max(1, (+$('chStart').value || 1) - 1); savePrefs(); renderPreview(); };
+$('chFree').onclick = () => {
+  if (!image){ log('Read the radio first, then I can find free channels.', 'warn'); return; }
+  $('chStart').value = firstFree(Math.max(1, plan().length)); savePrefs(); renderPreview();
+};
+
+/* ---------- talking to the radio ---------- */
+let busy = false, demoRadio = null, lastPort = null;
+/* Ask for the COM port once; after that reuse it, so there's no list to pick from every time. */
+async function getPort(){
+  if (demoRadio) return demoRadio.port();
+  if (!('serial' in navigator)) throw new RadioError('This browser has no Web Serial. Use Chrome or Edge on a PC.');
+  if (!lastPort){
+    const known = await navigator.serial.getPorts();
+    if (known.length === 1) lastPort = known[0];
+  }
+  if (!lastPort) lastPort = await navigator.serial.requestPort();
+  return lastPort;
+}
+async function session(label, fn){
+  if (busy) return; busy = true; updateButtons();
+  const link = new Link();
+  try {
+    const port = await getPort();
+    setState(label + '…', true);
+    await link.open(port);
+    const id = await handshake(link);
+    log(`Radio answered: "${id.trim()}"`);
+    await fn(link, id);
+  } catch (e){
+    if (e && e.name === 'NotFoundError') log('No port chosen.');
+    else {
+      lastPort = null;            // wrong port, port gone or radio silent: let the next try choose again
+      log(e.message || String(e), 'err'); setState('Stopped: ' + (e.message || e), false);
+    }
+  } finally {
+    await link.close().catch(() => {}); busy = false; updateButtons();
+  }
+}
+$('readBtn').onclick = () => { demoRadio = null; doRead(); };
+$('demoBtn').onclick = () => { if (!demoRadio || demoRadio.m !== M) demoRadio = new PretendRadio(M); log('Using the pretend radio. Nothing is sent to a real radio.', 'ok'); doRead(); };
+function doRead(){
+  return session('Reading', async link => {
+    image = await readImage(link); readThisSession = true;
+    const used = []; for (let n = 1; n <= M.CHANNELS; n++) if (decodeChannel(image, n)) used.push(n);
+    $('radioInfo').textContent = `${M.name}: ${used.length} of ${M.CHANNELS} channels in use` + (used.length ? ` (first: ${used.slice(0, 8).join(', ')}${used.length > 8 ? ', …' : ''}).` : '.');
+    const fname = `EasyFeng-${M.file}-backup-${stamp()}${demoRadio ? '-pretend' : ''}.img`;
+    download(makeImgFile(image), fname);
+    log(`Read complete. Backup saved to your Downloads folder as ${fname}`, 'ok');
+    setState('Read OK — backup saved', true); renderPreview();
+  });
+}
+$('saveImgBtn').onclick = () => { if (image) download(makeImgFile(image), `EasyFeng-${M.file}-${stamp()}.img`); };
+
+$('writeBtn').onclick = async () => {
+  if (!image || !readThisSession){ log('Read the radio first (step 1). That also saves a backup.', 'warn'); return; }
+  const p = plan(); if (!p.length) return;
+  for (const c of p) if (c.txHz != null && !legalTx(c.txHz)){ log(`${c.name}: transmit ${fmtMHz(c.txHz)} MHz is outside the amateur bands. Not written.`, 'err'); return; }
+  const next = image.slice();
+  for (const c of p) next.set(encodeChannel(c), (c.n - 1) * M.CHAN);
+  const wantBurst = M.TONE_BURST != null && $('burst').checked;
+  if (wantBurst) next[M.TONE_BURST] = 2;
+  const wantAm = M.AM_RX != null && p.some(c => c.txHz == null) && $('amrx').checked;
+  if (wantAm) next[M.AM_RX] = 1;
+  const blocks = M.blocks.filter(({ off }) => { for (let i = off; i < off + M.BLOCK; i++) if (next[i] !== image[i]) return true; return false; });
+  if (!blocks.length){ log('The radio already holds exactly these channels. Nothing to write.', 'ok'); return; }
+  const ul = document.createElement('div');
+  ul.innerHTML = `<p>Write ${p.length} channel${p.length > 1 ? 's' : ''} (${p[0].n}–${p[p.length - 1].n})${wantBurst && image[M.TONE_BURST] !== 2 ? ', set the tone burst to 1750 Hz' : ''}${wantAm && image[M.AM_RX] !== 1 ? ', turn on AM receive' : ''}?</p>`;
+  const repl = p.filter(c => c.old).length;
+  if (repl){ const w = document.createElement('p'); w.className = 'warn'; w.textContent = `${repl} channel${repl > 1 ? 's' : ''} already in use will be replaced.`; ul.appendChild(w); }
+  const k = document.createElement('p'); k.className = 'dim small'; k.textContent = 'Keep the radio switched on and the cable in until it says done.'; ul.appendChild(k);
+  if (!await ask('Write to the radio?', ul, 'Write')) return;
+  await session('Writing', async link => {
+    await writeBlocks(link, next, blocks);
+    progress(0, 0, 'Checking…');
+    const back = await readBlocks(link, blocks);
+    const bad = blocks.filter((b, i) => back[i].some((v, j) => v !== next[b.off + j]));
+    if (bad.length) throw new RadioError(`Written, but ${bad.length} block(s) read back differently. Restore the backup and try again.`);
+    image = next; progress(1, 1, 'Done');
+    log(`Done: ${p.length} channel${p.length > 1 ? 's' : ''} written and checked.`, 'ok');
+    setState('Written and checked', true); renderPreview();
+  });
+};
+
+$('restoreBtn').onclick = () => $('restoreFile').click();
+$('restoreFile').onchange = async () => {
+  const f = $('restoreFile').files[0]; $('restoreFile').value = ''; if (!f) return;
+  let img;
+  try { img = parseImgFile(await f.arrayBuffer()); } catch (e){ log(e.message, 'err'); return; }
+  let used = 0; for (let n = 1; n <= M.CHANNELS; n++) if (decodeChannel(img, n)) used++;
+  if (!await ask('Restore this backup?', `"${f.name}" holds ${used} channels. Everything in the radio will be replaced by it.`, 'Restore')) return;
+  await session('Restoring', async link => {
+    await writeBlocks(link, img, M.blocks);
+    image = img; readThisSession = true;
+    log(`Restored "${f.name}". Switch the radio off and on.`, 'ok'); setState('Backup restored', true); renderPreview();
+  });
+};
+
+/* ======================================================================
+   The pretend radio: answers on the "cable" exactly as the chosen model
+   does (handshake, follow-up commands, scrambling), so every button can be
+   tried, and tested, without a radio.
+   ====================================================================== */
+class PretendRadio {
+  constructor(model){
+    this.m = model; this.mem = new Map();                  // radio address -> byte
+    const img = new Uint8Array(model.SIZE).fill(0xFF);
+    img.fill(0, 0x8000, model.SIZE);
+    img.set(encodeChannel({ rxHz: 145500000, txHz: 145500000, tone: null, name: 'S20' }), 0);
+    img.set(encodeChannel({ rxHz: 433500000, txHz: 433500000, tone: null, name: 'U280' }), 32);
+    for (const { off, addr } of model.blocks) for (let i = 0; i < model.BLOCK; i++) this.mem.set(addr + i, img[off + i]);
+  }
+  image(){ const m = this.m, img = new Uint8Array(m.SIZE);
+    for (const { off, addr } of m.blocks) for (let i = 0; i < m.BLOCK; i++) img[off + i] = this.mem.get(addr + i); return img; }
+  port(){
+    const self = this, m = this.m; let ctl, mode = 'idle', step = 0, inbuf = [];
+    const send = bytes => setTimeout(() => ctl && ctl.enqueue(Uint8Array.from(bytes)), 2);
+    const handle = () => {
+      for (;;){
+        if (mode === 'idle'){
+          if (inbuf.length < 16) return;
+          const s = String.fromCharCode(...inbuf.splice(0, 16));
+          if (s === m.ident){ mode = 'magics'; step = 0; send([0x06]); } else inbuf.length = 0;   // wrong word: silence
+        } else if (mode === 'magics'){
+          const [cmd, len] = m.MAGICS[step];
+          if (inbuf.length < cmd.length) return;
+          const got = inbuf.splice(0, cmd.length);
+          if (got.some((v, i) => v !== cmd[i])){ inbuf.length = 0; return; }
+          const reply = new Uint8Array(len); reply.set(new TextEncoder().encode(('PRETEND ' + m.label).slice(0, len))); send(reply);
+          if (++step >= m.MAGICS.length) mode = 'prog';
+        } else {
+          if (inbuf.length < 4) return;
+          const [cmd, hi, lo, len] = inbuf, addr = (hi << 8) | lo;
+          if (cmd === 0x52){ inbuf.splice(0, 4); let d = []; for (let i = 0; i < len; i++) d.push(self.mem.get(addr + i) ?? 0xFF);
+            if (m.CRYPT) d = Array.from(crypt(d)); send([0x52, hi, lo, len, ...d]); }
+          else if (cmd === 0x57){ if (inbuf.length < 4 + len) return; let d = inbuf.splice(0, 4 + len).slice(4);
+            if (m.CRYPT) d = Array.from(crypt(d)); d.forEach((v, i) => self.mem.set(addr + i, v)); send([0x06]); }
+          else { inbuf.length = 0; }
+        }
+      }
+    };
+    return {
+      async open(){ this.readable = new ReadableStream({ start(c){ ctl = c; } });
+        this.writable = new WritableStream({ write(chunk){ inbuf.push(...chunk); handle(); } }); },
+      async close(){ try { ctl.close(); } catch {} ctl = null; }
+    };
+  }
+}
+
+/* ---------- choosing the model ---------- */
+function setModel(key){
+  if (busy || !MODELS[key]) return;
+  const changed = key !== modelKey;
+  modelKey = key; M = MODELS[key]; store.set('model', key);
+  for (const b of $('models').querySelectorAll('[data-m]')){ b.classList.toggle('sel', b.dataset.m === key); b.setAttribute('aria-pressed', b.dataset.m === key); }
+  document.title = 'EasyFeng — ' + M.label;
+  $('airTab').hidden = !M.AIR;
+  if (!M.AIR && filter === 'air'){ filter = '2m'; store.set('tab', filter); }
+  if (changed){ image = null; readThisSession = false; demoRadio = null; $('radioInfo').textContent = '';
+    setState('Not connected', false); progress(0, 0, ''); log(`Radio model: ${M.name}.`); }
+  renderCards(); renderPreview();
+}
+$('models').addEventListener('click', e => { const b = e.target.closest('[data-m]'); if (b) setModel(b.dataset.m); });
+
+setModel(modelKey);
+</script>
+</body>
+</html>
