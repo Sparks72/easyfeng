@@ -124,9 +124,11 @@
     <div class="row" style="margin-top:12px">
       <button id="readBtn" class="go" type="button">Read radio</button>
       <button id="demoBtn" type="button" title="Try everything without a radio">Try with a pretend radio</button>
+      <button id="portBtn" type="button" title="Choose which COM port the cable is on">Choose COM port</button>
       <span class="status"><span class="lamp" id="lamp"></span><span id="state">Not connected</span></span>
     </div>
     <div class="row"><div class="bar"><i id="prog"></i></div><span id="progTxt" class="dim small"></span></div>
+    <p id="portInfo" class="dim small"></p>
     <p id="radioInfo" class="dim"></p>
   </div>
 
@@ -171,6 +173,9 @@
       <label class="f">Bandwidth
         <select id="bw"><option value="wide">Wide FM (normal)</option><option value="narrow">Narrow FM</option></select>
       </label>
+      <label class="f">Name on the radio
+        <select id="nameStyle"><option value="both">Callsign + town (DB0MAR TIMME)</option><option value="town">Town (TIMMENDORFER)</option><option value="call">Callsign (DB0MAR)</option></select>
+      </label>
     </div>
     <div id="burstWrap">
     <div class="row">
@@ -180,6 +185,19 @@
       <span class="dim small" id="burstNow"></span>
     </div>
     <p class="dim small">With the tone burst at 1750 Hz, hold <b>PTT</b> and press the upper side key to open a repeater that needs it.</p>
+    </div>
+    <div class="row">
+      <label style="display:flex;gap:10px;align-items:center;font-size:1rem">
+        <input type="checkbox" id="shownames" checked style="width:26px;height:26px;min-height:0"> Show the <b>repeater names</b> on the radio's display
+      </label>
+      <span class="dim small" id="namesNow"></span>
+    </div>
+    <p class="dim small" style="margin-top:-4px">This sets both display lines to show names and puts the radio in channel mode, where the names appear.</p>
+    <div class="row">
+      <label style="display:flex;gap:10px;align-items:center;font-size:1rem">
+        <input type="checkbox" id="clearAfter" style="width:26px;height:26px;min-height:0"> <b>Delete</b> all channels after the last one written (old ones, duplicates)
+      </label>
+      <span class="dim small" id="clearNow"></span>
     </div>
     <div class="row" id="amRow" hidden>
       <label style="display:flex;gap:10px;align-items:center;font-size:1rem">
@@ -320,6 +338,15 @@ const MODELS = {
         SIZE: 0x8380, CHANNELS: 1000, TONE_BURST: null, AM_RX: null, AIR: false }
 };
 for (const m of Object.values(MODELS)){
+  // settings block (image 0x8040 = radio 0x9000, same start on all three, per CHIRP):
+  // +13 channel A display, +14 channel B display (0 name, 1 frequency, 2 channel number),
+  // +26 work mode: low nibble A, high nibble B (0 frequency, 1 channel)
+  m.DISP_A = 0x804D; m.DISP_B = 0x804E; m.WORKMODE = 0x805A;
+  // value meaning "show the name": CHIRP says 0 for this family, but a real K6 set to
+  // NAME in its own menu (39/40) stores 3 (seen in Paul's backups, Oct 2026)
+  m.DISP_NAME = m === MODELS.K6 ? 3 : 0;
+  m.DISPS = m === MODELS.K6 ? { 1: 'frequency', 2: 'channel number', 3: 'name' } : { 0: 'name', 1: 'frequency', 2: 'channel number' };
+  m.NO_NAME = [1, 2];          // display settings that hide the name; anything else (name, name + frequency, ...) is left as the user set it
   m.BLOCK = 0x40; m.CHAN = 32; m.BURSTS = ['1000 Hz', '1450 Hz', '1750 Hz', '2100 Hz'];
   m.MAGIC = new TextEncoder().encode(m.ident);
   // every 64-byte block: its image offset and its radio address
@@ -381,12 +408,17 @@ class Link {
 }
 
 async function handshake(link){
-  await link.drain(30);
-  await link.write(M.MAGIC);
-  let ack;
-  try { ack = await link.read(1, 1500); }
-  catch { throw new RadioError(`The radio did not answer. Check it is a ${M.name} (step 1), switched on, the plug pushed fully in, and the right COM port chosen.`); }
-  if (ack[0] !== 0x06) throw new RadioError(`The radio answered 0x${ack[0].toString(16)} instead of OK. Is this a ${M.name}?`);
+  // Up to three tries: a radio still in programming mode from the last session,
+  // or a byte left over on the cable, can spoil the first answer.
+  let ack = null, last = null;
+  for (let attempt = 1; attempt <= 3 && !ack; attempt++){
+    await link.drain(attempt === 1 ? 30 : 600);
+    await link.write(M.MAGIC);
+    try { const a = await link.read(1, 1500); if (a[0] === 0x06) ack = a; else { last = a[0]; log(`Radio answered 0x${a[0].toString(16)} - trying again (${attempt}/3)…`, 'warn'); } }
+    catch { last = null; if (attempt < 3) log(`No answer - trying again (${attempt}/3)…`, 'warn'); }
+  }
+  if (!ack && last === null) throw new RadioError(`The radio did not answer. Check it is a ${M.name} (step 1), switched on, the plug pushed fully in, and the right COM port chosen.`);
+  if (!ack) throw new RadioError(`The radio answered 0x${last.toString(16)} instead of OK. Switch the radio off and on, then try again. (Is it a ${M.name}?)`);
   let id = null;
   for (const [cmd, len] of M.MAGICS){
     await link.write(cmd);
@@ -415,6 +447,37 @@ async function writeBlocks(link, img, blocks){
     if (ack[0] !== 0x06) throw new RadioError(`The radio refused block 0x${addr.toString(16)}.`);
     progress(++n, blocks.length, `Writing ${n} of ${blocks.length}`);
   }
+}
+// Write, read back, and write again whatever did not arrive intact (a loose
+// plug can drop bits on the way to the radio while the radio still says OK).
+async function writeChecked(link, img, blocks){
+  await writeBlocks(link, img, blocks);
+  let bad = [];
+  for (let attempt = 1; attempt <= 4; attempt++){
+    progress(0, 0, attempt === 1 ? 'Checking…' : `Checking again (${attempt})…`);
+    bad = await verifyBlocks(link, img, bad.length ? bad.map(x => x.block) : blocks);
+    if (!bad.length) return;
+    if (attempt === 4) break;
+    log(`${bad.length} block(s) did not arrive intact - writing ${bad.length > 1 ? 'them' : 'it'} again (${attempt}/3)…`, 'warn');
+    await new Promise(r => setTimeout(r, 300));
+    await writeBlocks(link, img, bad.map(x => x.block));
+  }
+  for (const { block, diffs } of bad)
+    log(`Block 0x${block.addr.toString(16).padStart(4, '0')}: ` + diffs.slice(0, 6).map(([j, w, r]) =>
+      `+${j} wrote ${w.toString(16).padStart(2, '0')} radio has ${r.toString(16).padStart(2, '0')}`).join(', ') +
+      (diffs.length > 6 ? ` … (${diffs.length} bytes differ)` : ''), 'warn');
+  throw new RadioError(`${bad.length} block(s) would not write correctly even after 3 tries. This is almost always the cable plug: switch the radio off, push the plug fully home, switch on, then use Restore with your latest good backup.`);
+}
+
+// Read blocks back and list any byte that differs from what was written
+async function verifyBlocks(link, img, blocks){
+  const back = await readBlocks(link, blocks), bad = [];
+  blocks.forEach((b, i) => {
+    const diffs = [];
+    for (let j = 0; j < M.BLOCK; j++) if (back[i][j] !== img[b.off + j]) diffs.push([j, img[b.off + j], back[i][j]]);
+    if (diffs.length) bad.push({ block: b, diffs });
+  });
+  return bad;
 }
 async function readBlocks(link, blocks){
   const out = [];
@@ -683,15 +746,23 @@ async function askText(title, text, value){
 let image = null;          // what's in the radio (last read or written)
 let readThisSession = false;
 const prefs = store.get('prefs', { start: 1, power: '0', bw: 'wide' });
-$('chStart').value = prefs.start; $('power').value = prefs.power; $('bw').value = prefs.bw;
-function savePrefs(){ store.set('prefs', { start: +$('chStart').value, power: $('power').value, bw: $('bw').value }); }
+$('chStart').value = prefs.start; $('power').value = prefs.power; $('bw').value = prefs.bw; $('nameStyle').value = prefs.nameStyle2 || 'both';
+function savePrefs(){ store.set('prefs', { start: +$('chStart').value, power: $('power').value, bw: $('bw').value, nameStyle2: $('nameStyle').value }); }
+// The radio has 12 letters for a name, plain A-Z only
+function radioText(s){ return (s || '').replace(/ä/g,'ae').replace(/ö/g,'oe').replace(/ü/g,'ue').replace(/Ä/g,'Ae').replace(/Ö/g,'Oe').replace(/Ü/g,'Ue').replace(/ß/g,'ss')
+  .normalize('NFD').replace(/[\u0300-\u036f]/g,'').split(/[,(]/)[0].trim().toUpperCase()
+  .replace(/^(BAD|SANKT|ST\.?|OSTSEEBAD|SEEBAD|INSEL) +/, '').replace(/ +A\. *D\..*$/, '').trim(); }
+function radioName(r){ const town = radioText(r.qth), call = (r.call || '').toUpperCase().replace(/\s+/g, '').slice(0, 11), st = $('nameStyle').value;
+  if (!town || st === 'call' || (st === 'both' && (band(r) === 'air' || call.includes(town.slice(0, 4))))) return call.slice(0, 12);   // airband names already say where
+  if (st === 'town') return town.slice(0, 12).trim();
+  return (call + ' ' + town).slice(0, 12).trim(); }
 
 function plan(){
   const start = Math.max(1, Math.min(999, parseInt($('chStart').value, 10) || 1));
   const reps = allRepeaters().filter(r => picked.has(r.id) && (M.AIR || band(r) !== 'air'))
     .sort((a, b) => (distKm(home, a.loc) ?? 1e9) - (distKm(home, b.loc) ?? 1e9));
   return reps.map((r, i) => ({ n: start + i, r, rxHz: rxOf(r), txHz: txOf(r), tone: band(r) === 'air' ? null : r.tone,
-    name: r.call, low: $('power').value === '1', narrow: $('bw').value === 'narrow',
+    name: radioName(r), low: $('power').value === '1', narrow: $('bw').value === 'narrow',
     old: image ? decodeChannel(image, start + i) : null }));
 }
 function firstFree(count){
@@ -722,19 +793,35 @@ function renderPreview(){
   else if (clashes){ const w = document.createElement('p'); w.className = 'warn'; w.textContent = `${clashes} channel${clashes > 1 ? 's' : ''} already in use will be replaced (shown in yellow). Use "first free channels" to avoid that.`; box.appendChild(w); }
   updateButtons();
 }
+// Radio settings the ticked options would change (works with no channels picked too)
+function namesNeeded(){ return M.NO_NAME.includes(image[M.DISP_A]) || M.NO_NAME.includes(image[M.DISP_B]) || image[M.WORKMODE] !== 0x11; }
+function settingsChanges(){
+  const out = [];
+  if (!image) return out;
+  if ($('shownames').checked && namesNeeded()) out.push('show names on the display');
+  if (M.TONE_BURST != null && $('burst').checked && image[M.TONE_BURST] !== 2) out.push('set the tone burst to 1750 Hz');
+  return out;
+}
 function updateButtons(){
-  const p = plan();
-  $('writeBtn').disabled = busy || !p.length || p.some(c => c.n > M.CHANNELS);
+  const p = plan(), onlySettings = !p.length && settingsChanges().length > 0;
+  $('writeBtn').disabled = busy || (!p.length && !onlySettings) || p.some(c => c.n > M.CHANNELS);
+  $('writeBtn').textContent = onlySettings ? 'Write settings to radio' : 'Write channels to radio';
   $('saveImgBtn').disabled = busy || !image;
   $('writeNote').textContent = !image ? 'Read the radio first (step 1), so nothing else in it is lost.' : !readThisSession ? 'Read the radio again before writing.' : '';
-  $('readBtn').disabled = $('demoBtn').disabled = $('restoreBtn').disabled = busy;
+  $('readBtn').disabled = $('demoBtn').disabled = $('restoreBtn').disabled = $('portBtn').disabled = busy;
   $('burstWrap').hidden = M.TONE_BURST == null;
+  { const pp = plan(); let k = 0;
+    if (image && pp.length) for (let n = pp[pp.length - 1].n + 1; n <= M.CHANNELS; n++) if (decodeChannel(image, n)) k++;
+    $('clearNow').textContent = !image ? '' : !pp.length ? '' : k ? `(${k} channel${k > 1 ? 's' : ''} after channel ${pp[pp.length - 1].n} would go)` : '(nothing after them to delete)'; }
+  if (image) { const da = image[M.DISP_A], db = image[M.DISP_B], wm = image[M.WORKMODE] & 0x0F;
+    const nm = v => M.DISPS[v] || `your own choice (setting ${v})`;
+    $('namesNow').textContent = `(radio now: top line shows ${nm(da)}, bottom line ${nm(db)}, ${wm === 1 ? 'channel' : 'frequency'} mode)`; }
   if (image && M.TONE_BURST != null) $('burstNow').textContent = `(radio now: ${M.BURSTS[image[M.TONE_BURST]] || 'unknown'})`;
   else $('burstNow').textContent = '';
   if (image && M.AM_RX != null) $('amNow').textContent = `(radio now: ${image[M.AM_RX] === 1 ? 'on' : 'off'})`;
   $('amRow').hidden = M.AM_RX == null || !p.some(c => c.txHz == null);
 }
-for (const id of ['chStart', 'power', 'bw']) $(id).addEventListener('input', () => { savePrefs(); renderPreview(); });
+for (const id of ['chStart', 'power', 'bw', 'nameStyle']) $(id).addEventListener('input', () => { savePrefs(); renderPreview(); });
 $('chUp').onclick = () => { $('chStart').value = Math.min(999, (+$('chStart').value || 1) + 1); savePrefs(); renderPreview(); };
 $('chDown').onclick = () => { $('chStart').value = Math.max(1, (+$('chStart').value || 1) - 1); savePrefs(); renderPreview(); };
 $('chFree').onclick = () => {
@@ -745,30 +832,51 @@ $('chFree').onclick = () => {
 /* ---------- talking to the radio ---------- */
 let busy = false, demoRadio = null, lastPort = null;
 /* Ask for the COM port once; after that reuse it, so there's no list to pick from every time. */
+// USB-serial chips used in programming cables (to tell the cable from e.g. a radio's own USB port)
+const CABLE_CHIPS = { 0x1A86: 'CH340', 0x067B: 'Prolific', 0x0403: 'FTDI', 0x10C4: 'CP210x' };
+let askPort = false;                 // after a failed try: let the user choose the port again
+function portName(port){
+  const i = port && port.getInfo ? port.getInfo() : {};
+  return CABLE_CHIPS[i.usbVendorId] ? `${CABLE_CHIPS[i.usbVendorId]} cable` :
+         i.usbVendorId != null ? `USB device ${i.usbVendorId.toString(16).padStart(4, '0')}:${(i.usbProductId || 0).toString(16).padStart(4, '0')}` : 'serial port';
+}
+async function choosePort(){
+  lastPort = await navigator.serial.requestPort();
+  askPort = false;
+  $('portInfo').textContent = 'Using: ' + portName(lastPort);
+  return lastPort;
+}
 async function getPort(){
   if (demoRadio) return demoRadio.port();
   if (!('serial' in navigator)) throw new RadioError('This browser has no Web Serial. Use Chrome or Edge on a PC.');
+  if (askPort) return choosePort();
   if (!lastPort){
-    const known = await navigator.serial.getPorts();
-    if (known.length === 1) lastPort = known[0];
+    // only take a remembered port by itself if it is clearly the one programming cable
+    const cables = (await navigator.serial.getPorts()).filter(p => CABLE_CHIPS[(p.getInfo() || {}).usbVendorId]);
+    if (cables.length === 1){ lastPort = cables[0]; $('portInfo').textContent = 'Using: ' + portName(lastPort); }
   }
-  if (!lastPort) lastPort = await navigator.serial.requestPort();
+  if (!lastPort) return choosePort();
   return lastPort;
 }
 async function session(label, fn){
   if (busy) return; busy = true; updateButtons();
   const link = new Link();
+  let talked = false;                 // the radio answered the hello: the port is the right one
   try {
     const port = await getPort();
     setState(label + '…', true);
     await link.open(port);
     const id = await handshake(link);
+    talked = true;
     log(`Radio answered: "${id.trim()}"`);
     await fn(link, id);
   } catch (e){
     if (e && e.name === 'NotFoundError') log('No port chosen.');
     else {
-      lastPort = null;            // wrong port, port gone or radio silent: let the next try choose again
+      if (!talked){                     // wrong port, port gone or radio silent: ask for the port next time
+        lastPort = null; askPort = true;
+        log('Next time you press Read radio, you will be asked to choose the COM port again.', 'warn');
+      }
       log(e.message || String(e), 'err'); setState('Stopped: ' + (e.message || e), false);
     }
   } finally {
@@ -776,6 +884,7 @@ async function session(label, fn){
   }
 }
 $('readBtn').onclick = () => { demoRadio = null; doRead(); };
+$('portBtn').onclick = async () => { try { await choosePort(); log('COM port chosen: ' + portName(lastPort) + '.', 'ok'); } catch (e){ if (e && e.name === 'NotFoundError') log('No port chosen.'); else log(e.message || String(e), 'err'); } };
 $('demoBtn').onclick = () => { if (!demoRadio || demoRadio.m !== M) demoRadio = new PretendRadio(M); log('Using the pretend radio. Nothing is sent to a real radio.', 'ok'); doRead(); };
 function doRead(){
   return session('Reading', async link => {
@@ -790,9 +899,10 @@ function doRead(){
 }
 $('saveImgBtn').onclick = () => { if (image) download(makeImgFile(image), `EasyFeng-${M.file}-${stamp()}.img`); };
 
+for (const id of ['shownames', 'burst', 'amrx', 'clearAfter']) $(id).addEventListener('change', updateButtons);
 $('writeBtn').onclick = async () => {
   if (!image || !readThisSession){ log('Read the radio first (step 1). That also saves a backup.', 'warn'); return; }
-  const p = plan(); if (!p.length) return;
+  const p = plan(); if (!p.length && !settingsChanges().length) return;
   for (const c of p) if (c.txHz != null && !legalTx(c.txHz)){ log(`${c.name}: transmit ${fmtMHz(c.txHz)} MHz is outside the amateur bands. Not written.`, 'err'); return; }
   const next = image.slice();
   for (const c of p) next.set(encodeChannel(c), (c.n - 1) * M.CHAN);
@@ -800,22 +910,29 @@ $('writeBtn').onclick = async () => {
   if (wantBurst) next[M.TONE_BURST] = 2;
   const wantAm = M.AM_RX != null && p.some(c => c.txHz == null) && $('amrx').checked;
   if (wantAm) next[M.AM_RX] = 1;
+  const wantNames = $('shownames').checked;
+  const namesNeeded_ = namesNeeded();
+  if (wantNames){ for (const a of [M.DISP_A, M.DISP_B]) if (M.NO_NAME.includes(next[a])) next[a] = M.DISP_NAME; next[M.WORKMODE] = 0x11; }
+  // optionally empty every channel after the last one written (leftovers, duplicates)
+  let cleared = 0;
+  if (p.length && $('clearAfter').checked){
+    for (let n = p[p.length - 1].n + 1; n <= M.CHANNELS; n++){
+      if (decodeChannel(image, n)){ next.fill(0xFF, (n - 1) * M.CHAN, n * M.CHAN); cleared++; }
+    }
+  }
   const blocks = M.blocks.filter(({ off }) => { for (let i = off; i < off + M.BLOCK; i++) if (next[i] !== image[i]) return true; return false; });
   if (!blocks.length){ log('The radio already holds exactly these channels. Nothing to write.', 'ok'); return; }
   const ul = document.createElement('div');
-  ul.innerHTML = `<p>Write ${p.length} channel${p.length > 1 ? 's' : ''} (${p[0].n}–${p[p.length - 1].n})${wantBurst && image[M.TONE_BURST] !== 2 ? ', set the tone burst to 1750 Hz' : ''}${wantAm && image[M.AM_RX] !== 1 ? ', turn on AM receive' : ''}?</p>`;
+  ul.innerHTML = !p.length ? `<p>No channels are picked. Only change the radio's settings: ${settingsChanges().join(', ')}?</p>` :
+    `<p>Write ${p.length} channel${p.length > 1 ? 's' : ''} (${p[0].n}–${p[p.length - 1].n})${wantBurst && image[M.TONE_BURST] !== 2 ? ', set the tone burst to 1750 Hz' : ''}${wantAm && image[M.AM_RX] !== 1 ? ', turn on AM receive' : ''}${wantNames && namesNeeded_ ? ', show names on the display' : ''}${cleared ? `, and <b>delete the ${cleared} channel${cleared > 1 ? 's' : ''} after channel ${p[p.length - 1].n}</b>` : ''}?</p>`;
   const repl = p.filter(c => c.old).length;
   if (repl){ const w = document.createElement('p'); w.className = 'warn'; w.textContent = `${repl} channel${repl > 1 ? 's' : ''} already in use will be replaced.`; ul.appendChild(w); }
   const k = document.createElement('p'); k.className = 'dim small'; k.textContent = 'Keep the radio switched on and the cable in until it says done.'; ul.appendChild(k);
   if (!await ask('Write to the radio?', ul, 'Write')) return;
   await session('Writing', async link => {
-    await writeBlocks(link, next, blocks);
-    progress(0, 0, 'Checking…');
-    const back = await readBlocks(link, blocks);
-    const bad = blocks.filter((b, i) => back[i].some((v, j) => v !== next[b.off + j]));
-    if (bad.length) throw new RadioError(`Written, but ${bad.length} block(s) read back differently. Restore the backup and try again.`);
+    await writeChecked(link, next, blocks);
     image = next; progress(1, 1, 'Done');
-    log(`Done: ${p.length} channel${p.length > 1 ? 's' : ''} written and checked.`, 'ok');
+    log(p.length ? `Done: ${p.length} channel${p.length > 1 ? 's' : ''} written and checked.` : 'Done: settings written and checked. Switch the radio off and on.', 'ok');
     setState('Written and checked', true); renderPreview();
   });
 };
@@ -828,7 +945,7 @@ $('restoreFile').onchange = async () => {
   let used = 0; for (let n = 1; n <= M.CHANNELS; n++) if (decodeChannel(img, n)) used++;
   if (!await ask('Restore this backup?', `"${f.name}" holds ${used} channels. Everything in the radio will be replaced by it.`, 'Restore')) return;
   await session('Restoring', async link => {
-    await writeBlocks(link, img, M.blocks);
+    await writeChecked(link, img, M.blocks);
     image = img; readThisSession = true;
     log(`Restored "${f.name}". Switch the radio off and on.`, 'ok'); setState('Backup restored', true); renderPreview();
   });
@@ -844,6 +961,7 @@ class PretendRadio {
     this.m = model; this.mem = new Map();                  // radio address -> byte
     const img = new Uint8Array(model.SIZE).fill(0xFF);
     img.fill(0, 0x8000, model.SIZE);
+    img[model.DISP_A] = img[model.DISP_B] = 1;            // like a new radio: shows frequencies
     img.set(encodeChannel({ rxHz: 145500000, txHz: 145500000, tone: null, name: 'S20' }), 0);
     img.set(encodeChannel({ rxHz: 433500000, txHz: 433500000, tone: null, name: 'U280' }), 32);
     for (const { off, addr } of model.blocks) for (let i = 0; i < model.BLOCK; i++) this.mem.set(addr + i, img[off + i]);
