@@ -37,7 +37,9 @@ Backups are standard CHIRP `.img` files, so CHIRP can open them too.
 
 ## Repeater list
 
-The built-in list covers northern Germany around Fehmarn, plus OZ3REP on Lolland in Denmark. It comes from the repeatermap.de list (December 2022), RepeaterBook, afu-nord.de and the DL5SAF list (2019). Each card says how current its entry is. Repeaters change, so check before relying on one.
+The built-in list covers all of Germany (2 m and 70 cm FM, from the DL5SAF list of 2019) and the UK (2 m analogue repeaters marked operational on ukrepeater.net, October 2026). Around Fehmarn there are hand-checked entries from repeatermap.de (December 2022), RepeaterBook, afu-nord.de and the Nord-Ostsee-Rundspruch, plus OZ3REP on Lolland in Denmark. Each card says where its entry comes from and how current it is. Repeaters change, so check before relying on one.
+
+**Pick for me** picks the nearest repeaters to your locator: choose how many on 2 m and on 70 cm and how far away, then press the button. **Use my location** sets the locator from the computer's location. The cards show the nearest 40 first; "Show more" adds the next 40.
 
 Not every repeater uses a CTCSS tone. Where a card shows one, the channel sends it. Otherwise the repeater opens on carrier or with the 1750 Hz burst.
 
